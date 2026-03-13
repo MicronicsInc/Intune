@@ -2,6 +2,7 @@
 reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI" /v LastLoggedOnUser /f
 reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI" /v LastLoggedOnSAMUser /f
 reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI" /v LastLoggedOnDisplayName /f
+reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI" /v LastLoggedOnUserSID /f
 
 Write-Host "Stopping Office / OneDrive processes..."
 
@@ -81,6 +82,55 @@ Remove-Item "$env:LOCALAPPDATA\Microsoft\OneDrive\setup" -Recurse -Force -ErrorA
 # OneDrive account registry cache
 Remove-Item "HKCU:\Software\Microsoft\OneDrive\Accounts" -Recurse -Force -ErrorAction SilentlyContinue
 
+Write-Host "Clearing Edge login sessions for all profiles..."
+
+# Clear browser cache and cookies
+Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 2
+
+$edgeBase = "$env:LOCALAPPDATA\Microsoft\Edge\User Data"
+
+Get-ChildItem $edgeBase -Directory | Where-Object {
+    $_.Name -match "Default|Profile"
+} | ForEach-Object {
+
+    $profile = $_.FullName
+
+    Remove-Item "$profile\Cookies" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$profile\Login Data" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$profile\Web Data" -Force -ErrorAction SilentlyContinue
+}
+
+Write-Host "Clearing Chrome login sessions for all profiles..."
+
+Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 2
+
+$chromeBase = "$env:LOCALAPPDATA\Google\Chrome\User Data"
+
+Get-ChildItem $chromeBase -Directory | Where-Object {
+    $_.Name -match "Default|Profile"
+} | ForEach-Object {
+
+    $profile = $_.FullName
+
+    Remove-Item "$profile\Cookies" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$profile\Login Data" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$profile\Web Data" -Force -ErrorAction SilentlyContinue
+}
+
+Write-Host "Clearing Windows Credential Manager..."
+
+$creds = cmdkey /list | Select-String "Target:" | ForEach-Object { ($_ -split ":")[1].Trim() }
+
+foreach ($cred in $creds) {
+    cmdkey /delete:$cred
+}
+
+Write-Host "Refreshing Azure AD token..."
+
+dsregcmd /refreshprt
+
 Write-Host "Clearing Teams configuration..."
 
 Write-Host "Resetting Microsoft Teams..."
@@ -99,18 +149,6 @@ if (Test-Path $newTeams) {
     Remove-Item $newTeams -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "Clearing Windows Credential Manager..."
-
-$creds = cmdkey /list | Select-String "Target:" | ForEach-Object { ($_ -split ":")[1].Trim() }
-
-foreach ($cred in $creds) {
-    cmdkey /delete:$cred
-}
-
-Write-Host "Refreshing Azure AD token..."
-
-dsregcmd /refreshprt
-
 Write-Host "Configuring OneDrive first-run launch..."
 
 New-ItemProperty `
@@ -119,8 +157,5 @@ New-ItemProperty `
 -Value 'powershell.exe -WindowStyle Hidden -Command "Stop-Process -Name OneDrive -Force -ErrorAction SilentlyContinue; Start-Process ''C:\Program Files\Microsoft OneDrive\OneDrive.exe''"' `
 -PropertyType String `
 -Force
-
-Write-Host ""
-Write-Host "Reset complete. Rebooting..."
 
 Restart-Computer -Force
